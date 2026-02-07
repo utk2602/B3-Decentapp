@@ -1,0 +1,20 @@
+{
+  "name": "b3-decentapp",
+  "private": true,
+  "description": "Key – Privacy-First Messaging monorepo",
+  "scripts": {
+    "setup": "npm run install:all && npx tsx scripts/generate-keypair.ts",
+    "install:all": "npm install && cd api && npm install && cd ../web && npm install && cd ../app && npm install",
+    "dev:api": "cd api && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "dev:app": "cd app && npm start",
+    "dev": "echo \"Run each service in a separate terminal: npm run dev:api | npm run dev:web | npm run dev:app\"",
+    "generate-keypair": "npx tsx scripts/generate-keypair.ts"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.87.6",
+    "bs58": "^5.0.0",
+    "tsx": "^4.6.2",
+    "typescript": "^5.3.2"
+  }
+}

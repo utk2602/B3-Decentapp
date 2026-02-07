@@ -1,0 +1,36 @@
+{
+  "name": "key-api",
+  "version": "1.0.0",
+  "description": "Fee Payer API for Key messaging app",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@irys/upload": "^0.0.15",
+    "@irys/upload-solana": "^0.1.8",
+    "@solana/web3.js": "^1.87.6",
+    "@upstash/redis": "^1.35.8",
+    "bs58": "^5.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "pino": "^10.1.0",
+    "pino-http": "^11.0.0",
+    "pino-pretty": "^13.1.3",
+    "rate-limiter-flexible": "^4.0.1",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "tsx": "^4.6.2",
+    "typescript": "^5.3.2",
+    "vitest": "^1.0.4"
+  }
+}

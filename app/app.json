@@ -1,0 +1,80 @@
+{
+  "expo": {
+    "name": "Key",
+    "slug": "key-message",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "key",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#050505"
+    },
+    "ios": {
+    "supportsTablet": true,
+    "bundleIdentifier": "com.keymessage.app",
+    "buildNumber": "2",
+    "infoPlist": {
+      "NSCameraUsageDescription": "Key needs camera access to let you take photos and send them in private conversations. For example, when chatting with a friend, you can tap the camera button to capture a photo that gets encrypted before being sent. Photos are never stored on our servers unencrypted and only you and your recipient can view them.",
+      "NSPhotoLibraryUsageDescription": "Key needs photo library access to let you select existing photos and send them in private conversations. For example, when chatting with a friend, you can tap the gallery button to pick a photo that gets encrypted before being sent. Photos are never stored on our servers unencrypted and only you and your recipient can view them.",
+      "ITSAppUsesNonExemptEncryption": false
+    }
+  },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#050505"
+      },
+      "package": "com.keymessage.app",
+      "versionCode": 2,
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "pan",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/notification-icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Key needs photo library access to let you select existing photos and send them in private conversations. For example, when chatting with a friend, you can tap the gallery button to pick a photo that gets encrypted before being sent. Photos are never stored on our servers unencrypted and only you and your recipient can view them.",
+          "cameraPermission": "Key needs camera access to let you take photos and send them in private conversations. For example, when chatting with a friend, you can tap the camera button to capture a photo that gets encrypted before being sent. Photos are never stored on our servers unencrypted and only you and your recipient can view them."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#ffffff"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b932b963-e6e6-4893-91b2-6426fe58d338"
+      }
+    },
+    "owner": "serpepe",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/b932b963-e6e6-4893-91b2-6426fe58d338"
+    }
+  }
+}
