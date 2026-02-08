@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { config } from './config.js';
 import { initFeePayer, getFeePayerBalance, connection } from './services/solana.js';
+import { startDMSScheduler } from './services/dmsScheduler.js';
 import relayRouter from './routes/relay.js';
 import usernameRouter from './routes/username.js';
 import configRouter from './routes/config.js';
@@ -83,6 +84,8 @@ import groupsRouter from './routes/groups.js';
 app.use('/api/groups', groupsRouter);
 import signalingRouter from './routes/signaling.js';
 app.use('/api/signaling', signalingRouter);
+import dmsRouter from './routes/deadswitch.js';
+app.use('/api/dms', dmsRouter);
 
 // Start server
 async function start() {
@@ -117,6 +120,13 @@ async function start() {
         console.log(`  GET  /api/username/:name/check`);
         console.log(`  POST /api/username/register`);
         console.log(`  POST /api/message/send`);
+        console.log(`  PUT  /api/dms/configure`);
+        console.log(`  POST /api/dms/checkin`);
+        console.log(`  GET  /api/dms/status/:pubkey`);
+        console.log(`  DEL  /api/dms/disable`);
+
+        // Start background DMS scheduler after server is up
+        startDMSScheduler();
     });
 }
 

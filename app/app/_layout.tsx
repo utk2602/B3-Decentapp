@@ -6,7 +6,7 @@ import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments, useLocalSearchParams } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState, useRef } from 'react';
-import { View, Platform, Text, StyleSheet } from 'react-native';
+import { View, Platform, Text, StyleSheet, AppState } from 'react-native';
 
 import { Colors } from '@/constants/Colors';
 import { getStoredKeypair, getStoredUsername, storeUsername } from '@/lib/keychain';
@@ -133,6 +133,30 @@ function RootLayoutNav() {
         if (token) console.log('🔔 Push notifications registered:', token);
       }).catch(err => console.warn('Push setup failed:', err));
     }
+  }, [hasIdentity]);
+
+  // Auto check-in for Dead Man's Switch when app comes to foreground
+  useEffect(() => {
+    if (!hasIdentity) return;
+
+    const subscription = AppState.addEventListener('change', async (nextState) => {
+      if (nextState === 'active') {
+        try {
+          const { getUserSettings } = await import('@/lib/settingsStorage');
+          const settings = await getUserSettings();
+          if (settings.dmsEnabled) {
+            const { checkinDMS } = await import('@/lib/deadswitch');
+            await checkinDMS();
+            console.log('💓 DMS auto check-in on foreground');
+          }
+        } catch (err) {
+          // Silent fail – don't disrupt the user
+          console.warn('DMS auto check-in failed:', err);
+        }
+      }
+    });
+
+    return () => subscription.remove();
   }, [hasIdentity]);
 
   const checkAuth = async () => {
