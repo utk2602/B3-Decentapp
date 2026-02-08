@@ -86,6 +86,10 @@ import signalingRouter from './routes/signaling.js';
 app.use('/api/signaling', signalingRouter);
 import dmsRouter from './routes/deadswitch.js';
 app.use('/api/dms', dmsRouter);
+import recoveryRouter from './routes/recovery.js';
+app.use('/api/recovery', recoveryRouter);
+import moderationRouter from './routes/moderation.js';
+app.use('/api/moderation', moderationRouter);
 
 // Start server
 async function start() {
@@ -124,6 +128,11 @@ async function start() {
         console.log(`  POST /api/dms/checkin`);
         console.log(`  GET  /api/dms/status/:pubkey`);
         console.log(`  DEL  /api/dms/disable`);
+        console.log(`  PUT  /api/recovery/configure`);
+        console.log(`  POST /api/recovery/initiate`);
+        console.log(`  GET  /api/recovery/session/:id`);
+        console.log(`  POST /api/moderation/flag`);
+        console.log(`  GET  /api/moderation/status/:pubkey`);
 
         // Start background DMS scheduler after server is up
         startDMSScheduler();

@@ -49,6 +49,7 @@ export default function GroupChatScreen() {
     const [emojiPickerVisible, setEmojiPickerVisible] = useState(false);
     const listRef = useRef<FlatList<GroupMessage>>(null);
     const processedArweaveIds = useRef<Set<string>>(new Set());
+    const isNearBottom = useRef(true);
 
     useEffect(() => {
         if (groupId) {
@@ -338,8 +339,8 @@ export default function GroupChatScreen() {
     return (
         <KeyboardAvoidingView
             style={styles.container}
-            behavior="padding"
-            keyboardVerticalOffset={0}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
         >
             <Stack.Screen
                 options={{
@@ -422,10 +423,18 @@ export default function GroupChatScreen() {
                         </View>
                     );
                 }}
-                contentContainerStyle={styles.messagesList}
-                onContentSizeChange={() => {
-                    listRef.current?.scrollToEnd({ animated: false });
+                contentContainerStyle={[styles.messagesList, { paddingTop: insets.top + 56 }]}
+                onScroll={({ nativeEvent }) => {
+                    const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
+                    isNearBottom.current = contentOffset.y >= contentSize.height - layoutMeasurement.height - 120;
                 }}
+                scrollEventThrottle={16}
+                onContentSizeChange={() => {
+                    if (isNearBottom.current) {
+                        listRef.current?.scrollToEnd({ animated: true });
+                    }
+                }}
+                keyboardDismissMode="interactive"
                 ListEmptyComponent={
                     <View style={styles.emptyContainer}>
                         <View style={styles.emptyIcon}>
@@ -504,9 +513,9 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
     },
     messagesList: {
-        paddingTop: 100,
-        paddingBottom: 8,
+        paddingBottom: 20,
         paddingHorizontal: 16,
+        flexGrow: 1,
     },
     messageContainer: {
         marginBottom: 4,

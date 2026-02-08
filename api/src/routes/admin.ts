@@ -92,4 +92,100 @@ router.get('/redis-stats', adminAuth, async (_req: Request, res: Response) => {
     }
 });
 
+/**
+ * GET /api/admin/flagged-users
+ * List users with moderation strikes
+ */
+router.get('/flagged-users', adminAuth, async (_req: Request, res: Response) => {
+    try {
+        const strikeKeys = await redis.keys('strikes:*');
+        const bannedKeys = await redis.keys('banned:*');
+
+        const users: any[] = [];
+        for (const key of strikeKeys) {
+            const pubkey = key.replace('strikes:', '');
+            const strikes = parseInt(String((await redis.get(key)) || '0'), 10);
+            const bannedStr = await redis.get(`banned:${pubkey}`);
+            users.push({
+                pubkey,
+                strikes,
+                banned: !!bannedStr,
+                banDetails: bannedStr ? JSON.parse(String(bannedStr)) : null,
+            });
+        }
+
+        // Also include banned users without strike keys
+        for (const key of bannedKeys) {
+            const pubkey = key.replace('banned:', '');
+            if (!users.find((u) => u.pubkey === pubkey)) {
+                const bannedStr = await redis.get(key);
+                users.push({
+                    pubkey,
+                    strikes: 0,
+                    banned: true,
+                    banDetails: bannedStr ? JSON.parse(String(bannedStr)) : null,
+                });
+            }
+        }
+
+        return res.json({ users, total: users.length });
+    } catch (error) {
+        console.error('❌ Flagged users error:', error);
+        return res.status(500).json({ error: 'Failed to fetch flagged users' });
+    }
+});
+
+/**
+ * POST /api/admin/reset-strikes
+ * Reset strikes for a specific user
+ */
+router.post('/reset-strikes', adminAuth, async (req: Request, res: Response) => {
+    try {
+        const { pubkey } = req.body;
+        if (!pubkey) return res.status(400).json({ error: 'Missing pubkey' });
+
+        await redis.del(`strikes:${pubkey}`);
+
+        // Clean up flag history
+        const flagKeys = await redis.keys(`flag:${pubkey}:*`);
+        for (const k of flagKeys) await redis.del(k);
+
+        console.log(`🧹 Admin reset strikes for ${pubkey.slice(0, 8)}`);
+        return res.json({ success: true, pubkey });
+    } catch (error) {
+        console.error('❌ Reset strikes error:', error);
+        return res.status(500).json({ error: 'Reset failed' });
+    }
+});
+
+/**
+ * GET /api/admin/flags/:pubkey
+ * View flag details for a specific user
+ */
+router.get('/flags/:pubkey', adminAuth, async (req: Request, res: Response) => {
+    try {
+        const { pubkey } = req.params;
+        const flagKeys = await redis.keys(`flag:${pubkey}:*`);
+        const strikesStr = await redis.get(`strikes:${pubkey}`);
+        const bannedStr = await redis.get(`banned:${pubkey}`);
+
+        const flags: any[] = [];
+        for (const key of flagKeys) {
+            const data = await redis.get(key);
+            if (data) flags.push(JSON.parse(String(data)));
+        }
+
+        return res.json({
+            pubkey,
+            strikes: strikesStr ? parseInt(String(strikesStr), 10) : 0,
+            banned: !!bannedStr,
+            banDetails: bannedStr ? JSON.parse(String(bannedStr)) : null,
+            flags,
+        });
+    } catch (error) {
+        console.error('❌ Flags fetch error:', error);
+        return res.status(500).json({ error: 'Fetch failed' });
+    }
+});
+
 export default router;

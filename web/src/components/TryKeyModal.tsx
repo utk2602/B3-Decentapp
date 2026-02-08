@@ -44,7 +44,7 @@ export default function TryKeyModal({ isOpen, onClose }: TryKeyModalProps) {
                         <div className="modal-options">
                             {/* Apple - Active */}
                             <a
-                                href="https://apps.apple.com/us/app/key-private-messaging/id6756910042"
+                                href="http://localhost:8081/"
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="modal-option"

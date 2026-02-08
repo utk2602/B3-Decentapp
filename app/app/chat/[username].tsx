@@ -57,6 +57,7 @@ export default function ChatScreen() {
     const [reportMessage, setReportMessage] = useState<{ signature: string; sender: string } | null>(null);
     const listRef = useRef<FlatList<Message>>(null);
     const processedSignatures = useRef<Set<string>>(new Set());
+    const isNearBottom = useRef(true);
 
     useEffect(() => {
         clearChatUnreadCount(username!);
@@ -359,6 +360,25 @@ export default function ChatScreen() {
             Alert.alert('Blocked', 'You cannot send messages to a blocked user.');
             return;
         }
+
+        // ── Content moderation gate (runs locally, pre-encryption) ──
+        try {
+            const { checkContent, flagContent } = await import('@/lib/moderation');
+            const result = checkContent(text);
+            if (!result.safe) {
+                Alert.alert(
+                    'Message Blocked',
+                    'This message was flagged for potentially harmful content and cannot be sent.',
+                );
+                // Auto-report (only sends category + hash, never the text)
+                flagContent(result.category || 'unknown').catch(() => {});
+                return;
+            }
+        } catch (err) {
+            // If moderation module fails, allow the message through
+            console.warn('Content moderation check failed:', err);
+        }
+
         if (!recipientPublicKey) {
             if (Platform.OS === 'web') {
                 alert(`Cannot send message: No encryption key found for @${username}. The user may need to re-register.`);
@@ -394,6 +414,7 @@ export default function ChatScreen() {
             if (Platform.OS !== 'web') {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             }
+            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
             const encryptedData = encryptMessage(
                 text,
                 recipientPublicKey,
@@ -473,12 +494,12 @@ export default function ChatScreen() {
     return (
         <KeyboardAvoidingView
             style={styles.container}
-            behavior="padding"
-            keyboardVerticalOffset={0}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
         >
             {backgroundColor.startsWith('gradient:') ? (
                 <LinearGradient
-                    colors={JSON.parse(backgroundColor.replace('gradient: ', ''))}
+                    colors={JSON.parse(backgroundColor.replace(/^gradient:\s*/, ''))}
                     style={StyleSheet.absoluteFillObject}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
@@ -527,10 +548,25 @@ export default function ChatScreen() {
                 keyExtractor={(item) => item.id}
                 renderItem={renderItem}
                 contentContainerStyle={[styles.messageList, getChatContainerStyle(responsive)]}
-                onContentSizeChange={() => {
-                    listRef.current?.scrollToEnd({ animated: false });
+                onScroll={({ nativeEvent }) => {
+                    const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
+                    isNearBottom.current = contentOffset.y >= contentSize.height - layoutMeasurement.height - 120;
                 }}
+                scrollEventThrottle={16}
+                onContentSizeChange={() => {
+                    if (isNearBottom.current) {
+                        listRef.current?.scrollToEnd({ animated: true });
+                    }
+                }}
+                keyboardDismissMode="interactive"
                 showsVerticalScrollIndicator={false}
+                ListEmptyComponent={
+                    <View style={styles.emptyState}>
+                        <Text style={styles.emptyStateIcon}>💬</Text>
+                        <Text style={styles.emptyStateTitle}>No messages yet</Text>
+                        <Text style={styles.emptyStateSubtitle}>Send a message to start the conversation</Text>
+                    </View>
+                }
             />
             {replyingTo && (
                 <View style={styles.replyPreview}>
@@ -577,8 +613,9 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.background,
     },
     messageList: {
-        paddingVertical: 16,
-        paddingBottom: 8,
+        paddingTop: 12,
+        paddingBottom: 20,
+        flexGrow: 1,
     },
     replyPreview: {
         flexDirection: 'row',
@@ -591,7 +628,7 @@ const styles = StyleSheet.create({
     },
     replyBar: {
         width: 3,
-        height: '100%',
+        alignSelf: 'stretch',
         backgroundColor: Colors.primary,
         borderRadius: 2,
         marginRight: 12,
@@ -612,5 +649,25 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: Colors.textMuted,
         padding: 8,
+    },
+    emptyState: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 80,
+    },
+    emptyStateIcon: {
+        fontSize: 48,
+        marginBottom: 16,
+    },
+    emptyStateTitle: {
+        fontSize: 18,
+        fontWeight: '300',
+        color: Colors.text,
+        marginBottom: 6,
+    },
+    emptyStateSubtitle: {
+        fontSize: 14,
+        color: Colors.textMuted,
     },
 });

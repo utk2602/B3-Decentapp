@@ -177,6 +177,7 @@ export function MessageBubble({
             style={[
                 styles.container,
                 message.isMine ? styles.containerMine : styles.containerTheirs,
+                isFirstInGroup && styles.firstInGroup,
                 !isLastInGroup && styles.groupedMargin,
             ]}
         >
@@ -250,7 +251,7 @@ const styles = StyleSheet.create({
     container: {
         marginHorizontal: 16,
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-end',
     },
     containerMine: {
         justifyContent: 'flex-end',
@@ -259,6 +260,9 @@ const styles = StyleSheet.create({
     containerTheirs: {
         justifyContent: 'flex-start',
         marginVertical: 2,
+    },
+    firstInGroup: {
+        marginTop: 8,
     },
     groupedMargin: {
         marginVertical: 1,

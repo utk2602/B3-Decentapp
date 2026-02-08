@@ -84,6 +84,7 @@ function RootLayoutNav() {
   const query = useLocalSearchParams<{ bypass?: string }>();
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [hasIdentity, setHasIdentity] = useState(false);
+  const [isBanned, setIsBanned] = useState(false);
   const prevSegments = useRef<string[]>([]);
   const bypassCheckedRef = useRef(false);
 
@@ -231,6 +232,22 @@ function RootLayoutNav() {
       // Always set identity state based on actual values (moved outside conditional)
       // This ensures we don't get stuck in onboarding if username recovery fails
       setHasIdentity(!!keypair && !!resolvedUsername);
+
+      // Check moderation ban status
+      if (keypair && resolvedUsername) {
+        try {
+          const { getModerationStatus } = await import('@/lib/moderation');
+          const modStatus = await getModerationStatus();
+          if (modStatus?.banned) {
+            setIsBanned(true);
+            console.log('🚫 Account is suspended');
+          } else {
+            setIsBanned(false);
+          }
+        } catch (err) {
+          console.warn('Moderation status check failed:', err);
+        }
+      }
     } catch (error) {
       console.error('Auth check failed:', error);
       // On any unexpected error, treat as no identity to allow recovery
@@ -250,7 +267,17 @@ function RootLayoutNav() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>      {/* Suspended account overlay */}
+      {isBanned && (
+        <View style={styles.banOverlay}>
+          <Text style={styles.banIcon}>🚫</Text>
+          <Text style={styles.banTitle}>Account Suspended</Text>
+          <Text style={styles.banText}>
+            Your account has been suspended due to content policy violations.
+            If you believe this is an error, please contact support.
+          </Text>
+        </View>
+      )}
       {/* Web Security Warning */}
       {Platform.OS === 'web' && (
         <View style={styles.webWarning}>
@@ -301,6 +328,10 @@ function RootLayoutNav() {
             name="tos-modal"
             options={{ presentation: 'modal', headerShown: false }}
           />
+          <Stack.Screen
+            name="recovery"
+            options={{ headerShown: false, gestureEnabled: false }}
+          />
         </Stack>
       </ThemeProvider>
     </View>
@@ -308,6 +339,31 @@ function RootLayoutNav() {
 }
 
 const styles = StyleSheet.create({
+  banOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(10, 10, 10, 0.95)',
+    zIndex: 9999,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  banIcon: {
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  banTitle: {
+    color: '#FF6B6B',
+    fontSize: 24,
+    fontWeight: '700',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  banText: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
   webWarning: {
     backgroundColor: '#FFA726',
     paddingVertical: 8,

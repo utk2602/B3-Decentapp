@@ -21,6 +21,11 @@ export interface UserSettings {
     dmsEnabled?: boolean;
     dmsIntervalHours?: number; // 0 = 10-second test, 12, 24, 48, 72, 168
     dmsRecipients?: { username: string; message: string }[];
+
+    // Recovery Guardians
+    recoveryConfigured?: boolean;
+    recoveryGuardians?: string[]; // guardian usernames
+    recoveryThreshold?: number;
 }
 
 /**

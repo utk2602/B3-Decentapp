@@ -50,6 +50,14 @@ export default function SettingsScreen() {
     const [dmsNewMessage, setDmsNewMessage] = useState('');
     const [contactUsernames, setContactUsernames] = useState<string[]>([]);
 
+    // ── Recovery Guardians state ──
+    const [recoveryGuardians, setRecoveryGuardians] = useState<string[]>([]);
+    const [recoveryThreshold, setRecoveryThreshold] = useState(2);
+    const [recoveryConfigured, setRecoveryConfigured] = useState(false);
+    const [recoveryLoading, setRecoveryLoading] = useState(false);
+    const [recoveryNewGuardian, setRecoveryNewGuardian] = useState('');
+    const [pendingRecoveryRequests, setPendingRecoveryRequests] = useState<any[]>([]);
+
     useEffect(() => {
         loadIdentity();
         loadConfig();
@@ -72,12 +80,29 @@ export default function SettingsScreen() {
         if (settings.dmsEnabled) setDmsEnabled(true);
         if (settings.dmsIntervalHours !== undefined) setDmsInterval(settings.dmsIntervalHours);
         if (settings.dmsRecipients) setDmsRecipients(settings.dmsRecipients);
+        // Restore recovery state
+        if (settings.recoveryConfigured) setRecoveryConfigured(true);
+        if (settings.recoveryGuardians) setRecoveryGuardians(settings.recoveryGuardians);
+        if (settings.recoveryThreshold) setRecoveryThreshold(settings.recoveryThreshold);
     };
 
     const loadContacts = async () => {
         try {
             const contacts = await getLocalContacts();
             setContactUsernames(contacts.map(c => c.username));
+        } catch { /* ignore */ }
+    };
+
+    // Load pending recovery requests (guardian side)
+    useEffect(() => {
+        if (publicKey) loadPendingRecoveries();
+    }, [publicKey]);
+
+    const loadPendingRecoveries = async () => {
+        try {
+            const { getPendingRecoveryRequests } = await import('@/lib/recovery');
+            const requests = await getPendingRecoveryRequests();
+            setPendingRecoveryRequests(requests);
         } catch { /* ignore */ }
     };
 
@@ -98,6 +123,98 @@ export default function SettingsScreen() {
         { label: '72 hours', value: 72 },
         { label: '7 days', value: 168 },
     ];
+
+    // ── Recovery Guardians handlers ──
+
+    const addRecoveryGuardian = () => {
+        const u = recoveryNewGuardian.trim().toLowerCase();
+        if (!u) return;
+        if (recoveryGuardians.includes(u)) {
+            Alert.alert('Duplicate', `@${u} is already a guardian.`);
+            return;
+        }
+        setRecoveryGuardians(prev => [...prev, u]);
+        setRecoveryNewGuardian('');
+    };
+
+    const removeRecoveryGuardian = (u: string) => {
+        setRecoveryGuardians(prev => prev.filter(g => g !== u));
+    };
+
+    const handleRecoverySave = async () => {
+        if (recoveryGuardians.length < 2) {
+            Alert.alert('Not enough guardians', 'You need at least 2 guardians.');
+            return;
+        }
+        if (recoveryThreshold > recoveryGuardians.length) {
+            Alert.alert('Invalid threshold', 'Threshold cannot exceed the number of guardians.');
+            return;
+        }
+        setRecoveryLoading(true);
+        try {
+            const { configureRecovery } = await import('@/lib/recovery');
+            const result = await configureRecovery(recoveryGuardians, recoveryThreshold);
+            if (!result.success) {
+                Alert.alert('Recovery Setup Failed', result.error || 'Unknown error');
+            } else {
+                setRecoveryConfigured(true);
+                await saveUserSettings({
+                    recoveryConfigured: true,
+                    recoveryGuardians,
+                    recoveryThreshold,
+                });
+                Alert.alert('✓ Recovery Configured', `${recoveryGuardians.length} guardians, threshold ${recoveryThreshold}`);
+            }
+        } catch (err) {
+            Alert.alert('Error', err instanceof Error ? err.message : 'Setup failed');
+        } finally {
+            setRecoveryLoading(false);
+        }
+    };
+
+    const handleRecoveryDisable = async () => {
+        Alert.alert(
+            'Disable Recovery?',
+            'Your recovery configuration will be permanently removed.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Disable',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setRecoveryLoading(true);
+                        try {
+                            const { disableRecovery } = await import('@/lib/recovery');
+                            await disableRecovery();
+                            setRecoveryConfigured(false);
+                            setRecoveryGuardians([]);
+                            await saveUserSettings({
+                                recoveryConfigured: false,
+                                recoveryGuardians: [],
+                                recoveryThreshold: 2,
+                            });
+                        } catch { /* ignore */ }
+                        setRecoveryLoading(false);
+                    },
+                },
+            ],
+        );
+    };
+
+    const handleApproveRecovery = async (request: any) => {
+        try {
+            const { approveRecoveryRequest } = await import('@/lib/recovery');
+            const result = await approveRecoveryRequest(request);
+            if (result.success) {
+                Alert.alert('✓ Approved', 'Your shard has been submitted.');
+                loadPendingRecoveries();
+            } else {
+                Alert.alert('Failed', result.error || 'Could not approve');
+            }
+        } catch (err) {
+            Alert.alert('Error', err instanceof Error ? err.message : 'Approval failed');
+        }
+    };
 
     const handleDMSSave = async () => {
         if (dmsRecipients.length === 0) {
@@ -488,6 +605,160 @@ export default function SettingsScreen() {
                     </View>
                 )}
 
+                {/* ── Recovery Guardians Section ── */}
+                <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>Recovery Guardians</Text>
+                    <Text style={[styles.settingLabel, { marginBottom: 12 }]}>
+                        Choose trusted contacts to help recover your identity if you lose your device.
+                    </Text>
+
+                    {recoveryConfigured && (
+                        <View style={[styles.dmsStatusBar]}>
+                            <Ionicons name="shield-checkmark" size={16} color={Colors.accent} />
+                            <Text style={styles.dmsStatusText}>
+                                Configured · {recoveryGuardians.length} guardian{recoveryGuardians.length !== 1 ? 's' : ''} · threshold {recoveryThreshold}
+                            </Text>
+                        </View>
+                    )}
+
+                    {/* Threshold selector */}
+                    <Text style={[styles.settingLabel, { marginTop: 8 }]}>Threshold (min approvals)</Text>
+                    <View style={styles.dmsIntervalRow}>
+                        {[2, 3, 4, 5].filter(t => t <= Math.max(recoveryGuardians.length, 2)).map(t => (
+                            <Pressable
+                                key={t}
+                                style={[
+                                    styles.dmsIntervalChip,
+                                    recoveryThreshold === t && styles.dmsIntervalChipSelected,
+                                ]}
+                                onPress={() => setRecoveryThreshold(t)}
+                            >
+                                <Text style={[
+                                    styles.dmsIntervalChipText,
+                                    recoveryThreshold === t && styles.dmsIntervalChipTextSelected,
+                                ]}>
+                                    {t} of {recoveryGuardians.length || '?'}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </View>
+
+                    {/* Guardian list */}
+                    <Text style={[styles.settingLabel, { marginTop: 14 }]}>Guardians</Text>
+                    {recoveryGuardians.map(u => (
+                        <View key={u} style={styles.dmsRecipientRow}>
+                            <Text style={styles.dmsRecipientName}>@{u}</Text>
+                            <Pressable onPress={() => removeRecoveryGuardian(u)} hitSlop={8}>
+                                <Ionicons name="close-circle" size={20} color={Colors.error} />
+                            </Pressable>
+                        </View>
+                    ))}
+
+                    {/* Add guardian */}
+                    <View style={styles.dmsAddRow}>
+                        <TextInput
+                            style={[styles.dmsInput, { flex: 1 }]}
+                            placeholder="@guardian_username"
+                            placeholderTextColor={Colors.textMuted}
+                            value={recoveryNewGuardian}
+                            onChangeText={setRecoveryNewGuardian}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                        />
+                        <Pressable style={styles.dmsAddBtn} onPress={addRecoveryGuardian}>
+                            <Ionicons name="add" size={20} color={Colors.primary} />
+                        </Pressable>
+                    </View>
+
+                    {/* Quick-add from contacts */}
+                    {contactUsernames.length > 0 && (
+                        <View style={styles.dmsContactSuggestions}>
+                            <Text style={{ fontSize: 10, color: Colors.textMuted, marginBottom: 4 }}>Contacts:</Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                {contactUsernames
+                                    .filter(u => !recoveryGuardians.includes(u))
+                                    .slice(0, 8)
+                                    .map(u => (
+                                        <Pressable
+                                            key={u}
+                                            style={styles.dmsContactChip}
+                                            onPress={() => setRecoveryNewGuardian(u)}
+                                        >
+                                            <Text style={styles.dmsContactChipText}>@{u}</Text>
+                                        </Pressable>
+                                    ))}
+                            </View>
+                        </View>
+                    )}
+
+                    {/* Action buttons */}
+                    <View style={styles.dmsActions}>
+                        {!recoveryConfigured ? (
+                            <Pressable
+                                style={({ pressed }) => [styles.dmsArmBtn, pressed && { opacity: 0.7 }]}
+                                onPress={handleRecoverySave}
+                                disabled={recoveryLoading}
+                            >
+                                {recoveryLoading ? (
+                                    <ActivityIndicator size="small" color={Colors.background} />
+                                ) : (
+                                    <>
+                                        <Ionicons name="shield-outline" size={16} color={Colors.background} />
+                                        <Text style={styles.dmsArmBtnText}>CONFIGURE RECOVERY</Text>
+                                    </>
+                                )}
+                            </Pressable>
+                        ) : (
+                            <>
+                                <Pressable
+                                    style={({ pressed }) => [styles.dmsUpdateBtn, pressed && { opacity: 0.7 }]}
+                                    onPress={handleRecoverySave}
+                                    disabled={recoveryLoading}
+                                >
+                                    <Ionicons name="refresh" size={14} color={Colors.primary} />
+                                    <Text style={styles.dmsUpdateBtnText}>UPDATE</Text>
+                                </Pressable>
+                                <Pressable
+                                    style={({ pressed }) => [styles.dmsDisableBtn, pressed && { opacity: 0.7 }]}
+                                    onPress={handleRecoveryDisable}
+                                    disabled={recoveryLoading}
+                                >
+                                    <Ionicons name="trash-outline" size={14} color={Colors.error} />
+                                    <Text style={styles.dmsDisableBtnText}>DISABLE</Text>
+                                </Pressable>
+                            </>
+                        )}
+                    </View>
+                </View>
+
+                {/* ── Recovery Requests (Guardian Side) ── */}
+                {pendingRecoveryRequests.length > 0 && (
+                    <View style={styles.card}>
+                        <Text style={styles.sectionTitle}>Recovery Requests</Text>
+                        <Text style={[styles.settingLabel, { marginBottom: 12 }]}>
+                            A contact is trying to recover their identity. Approve to release your shard.
+                        </Text>
+                        {pendingRecoveryRequests.map((req, idx) => (
+                            <View key={req.recoveryId} style={[styles.dmsRecipientRow, { alignItems: 'center' }]}>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.dmsRecipientName}>
+                                        Owner: {req.ownerPubkey.slice(0, 8)}…
+                                    </Text>
+                                    <Text style={styles.dmsRecipientMsg}>
+                                        {req.submittedCount}/{req.threshold} approved
+                                    </Text>
+                                </View>
+                                <Pressable
+                                    style={[styles.dmsArmBtn, { paddingVertical: 8, paddingHorizontal: 16 }]}
+                                    onPress={() => handleApproveRecovery(req)}
+                                >
+                                    <Text style={[styles.dmsArmBtnText, { fontSize: 12 }]}>APPROVE</Text>
+                                </Pressable>
+                            </View>
+                        ))}
+                    </View>
+                )}
+
                 {/* Combined System Sections for compactness */}
                 <View style={styles.compactGrid}>
                     <View style={styles.gridHalf}>
@@ -530,7 +801,7 @@ export default function SettingsScreen() {
                             />
                             <View style={styles.divider} />
                             <Pressable onPress={() => {
-                                const url = appConfig?.githubUrl || 'https://github.com/serpepe/KeyApp';
+                                const url = appConfig?.githubUrl || 'https://github.com/utk2602/B3-Decentapp';
                                 Linking.openURL(url);
                             }}>
                                 <SettingsRow
