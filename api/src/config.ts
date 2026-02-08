@@ -22,6 +22,11 @@ export const config = {
     },
 
     // Spending Limits (Security)
+    moderation: {
+        warningThreshold: 3,
+        cooldownThreshold: 5,
+        banThreshold: 10,
+    },
     spendingLimits: {
         maxLamportsPerTx: 5000,           // Max cost per single transaction (0.000005 SOL)
         maxDailySolPerUser: 0.01,         // Max SOL a user can consume per day (~100 txs)

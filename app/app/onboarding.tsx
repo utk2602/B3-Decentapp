@@ -230,6 +230,16 @@ export default function OnboardingScreen() {
                         <Text style={styles.buttonText}>Start Encrypted Chat</Text>
                     </Pressable>
 
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.recoverButton,
+                            pressed && styles.buttonPressed,
+                        ]}
+                        onPress={() => router.push('/recovery')}
+                    >
+                        <Text style={styles.recoverButtonText}>Recover Identity</Text>
+                    </Pressable>
+
                 <View style={styles.termsSection}>
                     <Pressable onPress={() => setTosAccepted(!tosAccepted)} style={styles.checkboxContainer}>
                         <View style={[styles.checkbox, tosAccepted && styles.checkboxChecked]}>
@@ -408,6 +418,22 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.3,
         shadowRadius: 12,
         elevation: 8,
+    },
+    recoverButton: {
+        marginTop: 16,
+        paddingVertical: 14,
+        paddingHorizontal: 32,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.2)',
+    },
+    recoverButtonText: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: 'rgba(255, 255, 255, 0.6)',
+        textAlign: 'center',
+        letterSpacing: 1,
+        fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     },
     buttonPressed: {
         transform: [{ scale: 0.98 }],

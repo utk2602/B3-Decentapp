@@ -325,7 +325,7 @@ export default function Developers() {
                     <section className="section-large">
                         <h2 className="section-title" style={{ borderColor: 'var(--signal)' }}>Community</h2>
                         <div className="grid-2">
-                            <a href="https://github.com/SerPepe/KeyApp" className="card-link" target="_blank" rel="noopener">
+                            <a href="https://github.com/utk2602/B3-Decentapp" className="card-link" target="_blank" rel="noopener">
                                 <h4 className="mono card-label-signal">GitHub</h4>
                                 <p style={{ fontSize: '0.875rem', opacity: 0.8, marginBottom: '1rem' }}>
                                     Source code, issues, pull requests

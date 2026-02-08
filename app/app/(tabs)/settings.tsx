@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -9,6 +9,9 @@ import {
     Platform,
     Linking,
     Image,
+    TextInput,
+    ActivityIndicator,
+    Switch,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,6 +27,8 @@ import { fetchConfig, releaseUsername, uploadAvatar, buildReleaseTransaction, ty
 import { type CompressedImage } from '@/lib/imageUtils';
 import { getUserSettings, saveUserSettings, CHAT_BACKGROUND_PRESETS, type UserSettings } from '@/lib/settingsStorage';
 import { useResponsive, getContentContainerStyle } from '@/hooks/useResponsive';
+import { configureDMS, checkinDMS, getDMSStatus, disableDMS, type DMSRecipientInput, type DMSStatusResult } from '@/lib/deadswitch';
+import { getLocalContacts } from '@/lib/contacts';
 
 export default function SettingsScreen() {
     const router = useRouter();
@@ -35,11 +40,35 @@ export default function SettingsScreen() {
     const [avatarUri, setAvatarUri] = useState<string | null>(null);
     const [isTogglingEphemeral, setIsTogglingEphemeral] = useState(false);
 
+    // ── Dead Man's Switch state ──
+    const [dmsEnabled, setDmsEnabled] = useState(false);
+    const [dmsInterval, setDmsInterval] = useState<number>(24); // default 24h
+    const [dmsRecipients, setDmsRecipients] = useState<DMSRecipientInput[]>([]);
+    const [dmsStatus, setDmsStatus] = useState<DMSStatusResult | null>(null);
+    const [dmsLoading, setDmsLoading] = useState(false);
+    const [dmsNewUsername, setDmsNewUsername] = useState('');
+    const [dmsNewMessage, setDmsNewMessage] = useState('');
+    const [contactUsernames, setContactUsernames] = useState<string[]>([]);
+
+    // ── Recovery Guardians state ──
+    const [recoveryGuardians, setRecoveryGuardians] = useState<string[]>([]);
+    const [recoveryThreshold, setRecoveryThreshold] = useState(2);
+    const [recoveryConfigured, setRecoveryConfigured] = useState(false);
+    const [recoveryLoading, setRecoveryLoading] = useState(false);
+    const [recoveryNewGuardian, setRecoveryNewGuardian] = useState('');
+    const [pendingRecoveryRequests, setPendingRecoveryRequests] = useState<any[]>([]);
+
     useEffect(() => {
         loadIdentity();
         loadConfig();
         loadUserSettings();
+        loadContacts();
     }, []);
+
+    // Fetch DMS status whenever publicKey is loaded
+    useEffect(() => {
+        if (publicKey) loadDMSStatus();
+    }, [publicKey]);
 
     const loadUserSettings = async () => {
         const settings = await getUserSettings();
@@ -47,6 +76,225 @@ export default function SettingsScreen() {
         if (settings.avatarBase64) {
             setAvatarUri(`data:image/jpeg;base64,${settings.avatarBase64}`);
         }
+        // Restore DMS state from local settings
+        if (settings.dmsEnabled) setDmsEnabled(true);
+        if (settings.dmsIntervalHours !== undefined) setDmsInterval(settings.dmsIntervalHours);
+        if (settings.dmsRecipients) setDmsRecipients(settings.dmsRecipients);
+        // Restore recovery state
+        if (settings.recoveryConfigured) setRecoveryConfigured(true);
+        if (settings.recoveryGuardians) setRecoveryGuardians(settings.recoveryGuardians);
+        if (settings.recoveryThreshold) setRecoveryThreshold(settings.recoveryThreshold);
+    };
+
+    const loadContacts = async () => {
+        try {
+            const contacts = await getLocalContacts();
+            setContactUsernames(contacts.map(c => c.username));
+        } catch { /* ignore */ }
+    };
+
+    // Load pending recovery requests (guardian side)
+    useEffect(() => {
+        if (publicKey) loadPendingRecoveries();
+    }, [publicKey]);
+
+    const loadPendingRecoveries = async () => {
+        try {
+            const { getPendingRecoveryRequests } = await import('@/lib/recovery');
+            const requests = await getPendingRecoveryRequests();
+            setPendingRecoveryRequests(requests);
+        } catch { /* ignore */ }
+    };
+
+    const loadDMSStatus = async () => {
+        if (!publicKey) return;
+        try {
+            const status = await getDMSStatus(publicKey);
+            setDmsStatus(status);
+            if (status.enabled && !dmsEnabled) setDmsEnabled(true);
+        } catch { /* ignore */ }
+    };
+
+    const DMS_INTERVALS: { label: string; value: number }[] = [
+        { label: '10 sec (test)', value: 0 },
+        { label: '12 hours', value: 12 },
+        { label: '24 hours', value: 24 },
+        { label: '48 hours', value: 48 },
+        { label: '72 hours', value: 72 },
+        { label: '7 days', value: 168 },
+    ];
+
+    // ── Recovery Guardians handlers ──
+
+    const addRecoveryGuardian = () => {
+        const u = recoveryNewGuardian.trim().toLowerCase();
+        if (!u) return;
+        if (recoveryGuardians.includes(u)) {
+            Alert.alert('Duplicate', `@${u} is already a guardian.`);
+            return;
+        }
+        setRecoveryGuardians(prev => [...prev, u]);
+        setRecoveryNewGuardian('');
+    };
+
+    const removeRecoveryGuardian = (u: string) => {
+        setRecoveryGuardians(prev => prev.filter(g => g !== u));
+    };
+
+    const handleRecoverySave = async () => {
+        if (recoveryGuardians.length < 2) {
+            Alert.alert('Not enough guardians', 'You need at least 2 guardians.');
+            return;
+        }
+        if (recoveryThreshold > recoveryGuardians.length) {
+            Alert.alert('Invalid threshold', 'Threshold cannot exceed the number of guardians.');
+            return;
+        }
+        setRecoveryLoading(true);
+        try {
+            const { configureRecovery } = await import('@/lib/recovery');
+            const result = await configureRecovery(recoveryGuardians, recoveryThreshold);
+            if (!result.success) {
+                Alert.alert('Recovery Setup Failed', result.error || 'Unknown error');
+            } else {
+                setRecoveryConfigured(true);
+                await saveUserSettings({
+                    recoveryConfigured: true,
+                    recoveryGuardians,
+                    recoveryThreshold,
+                });
+                Alert.alert('✓ Recovery Configured', `${recoveryGuardians.length} guardians, threshold ${recoveryThreshold}`);
+            }
+        } catch (err) {
+            Alert.alert('Error', err instanceof Error ? err.message : 'Setup failed');
+        } finally {
+            setRecoveryLoading(false);
+        }
+    };
+
+    const handleRecoveryDisable = async () => {
+        Alert.alert(
+            'Disable Recovery?',
+            'Your recovery configuration will be permanently removed.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Disable',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setRecoveryLoading(true);
+                        try {
+                            const { disableRecovery } = await import('@/lib/recovery');
+                            await disableRecovery();
+                            setRecoveryConfigured(false);
+                            setRecoveryGuardians([]);
+                            await saveUserSettings({
+                                recoveryConfigured: false,
+                                recoveryGuardians: [],
+                                recoveryThreshold: 2,
+                            });
+                        } catch { /* ignore */ }
+                        setRecoveryLoading(false);
+                    },
+                },
+            ],
+        );
+    };
+
+    const handleApproveRecovery = async (request: any) => {
+        try {
+            const { approveRecoveryRequest } = await import('@/lib/recovery');
+            const result = await approveRecoveryRequest(request);
+            if (result.success) {
+                Alert.alert('✓ Approved', 'Your shard has been submitted.');
+                loadPendingRecoveries();
+            } else {
+                Alert.alert('Failed', result.error || 'Could not approve');
+            }
+        } catch (err) {
+            Alert.alert('Error', err instanceof Error ? err.message : 'Approval failed');
+        }
+    };
+
+    const handleDMSSave = async () => {
+        if (dmsRecipients.length === 0) {
+            Alert.alert('No recipients', 'Add at least one recipient before enabling the Dead Man\'s Switch.');
+            return;
+        }
+        setDmsLoading(true);
+        try {
+            await configureDMS(dmsInterval, dmsRecipients);
+            await saveUserSettings({
+                dmsEnabled: true,
+                dmsIntervalHours: dmsInterval,
+                dmsRecipients,
+            });
+            setDmsEnabled(true);
+            await loadDMSStatus();
+            if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert('✅ Dead Man\'s Switch armed', `Messages will be delivered if you don't check in within ${dmsInterval === 0 ? '10 seconds' : dmsInterval + ' hours'}.`);
+        } catch (err: any) {
+            Alert.alert('Error', err.message || 'Failed to configure Dead Man\'s Switch');
+        } finally {
+            setDmsLoading(false);
+        }
+    };
+
+    const handleDMSCheckin = async () => {
+        setDmsLoading(true);
+        try {
+            await checkinDMS();
+            await loadDMSStatus();
+            if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert('💓 Checked in', 'Timer has been reset.');
+        } catch (err: any) {
+            Alert.alert('Error', err.message || 'Check-in failed');
+        } finally {
+            setDmsLoading(false);
+        }
+    };
+
+    const handleDMSDisable = async () => {
+        Alert.alert(
+            'Disable Dead Man\'s Switch?',
+            'All scheduled messages will be deleted from the server.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Disable',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setDmsLoading(true);
+                        try {
+                            await disableDMS();
+                            await saveUserSettings({ dmsEnabled: false, dmsIntervalHours: undefined, dmsRecipients: undefined });
+                            setDmsEnabled(false);
+                            setDmsStatus(null);
+                            if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                        } catch (err: any) {
+                            Alert.alert('Error', err.message || 'Failed to disable');
+                        } finally {
+                            setDmsLoading(false);
+                        }
+                    },
+                },
+            ],
+        );
+    };
+
+    const addDMSRecipient = () => {
+        const u = dmsNewUsername.trim().replace('@', '');
+        const m = dmsNewMessage.trim();
+        if (!u) { Alert.alert('Enter a username'); return; }
+        if (!m) { Alert.alert('Enter a message'); return; }
+        if (dmsRecipients.find(r => r.username === u)) { Alert.alert('Duplicate', 'This recipient is already added.'); return; }
+        setDmsRecipients(prev => [...prev, { username: u, message: m }]);
+        setDmsNewUsername('');
+        setDmsNewMessage('');
+    };
+
+    const removeDMSRecipient = (username: string) => {
+        setDmsRecipients(prev => prev.filter(r => r.username !== username));
     };
 
     const loadConfig = async () => {
@@ -357,6 +605,160 @@ export default function SettingsScreen() {
                     </View>
                 )}
 
+                {/* ── Recovery Guardians Section ── */}
+                <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>Recovery Guardians</Text>
+                    <Text style={[styles.settingLabel, { marginBottom: 12 }]}>
+                        Choose trusted contacts to help recover your identity if you lose your device.
+                    </Text>
+
+                    {recoveryConfigured && (
+                        <View style={[styles.dmsStatusBar]}>
+                            <Ionicons name="shield-checkmark" size={16} color={Colors.accent} />
+                            <Text style={styles.dmsStatusText}>
+                                Configured · {recoveryGuardians.length} guardian{recoveryGuardians.length !== 1 ? 's' : ''} · threshold {recoveryThreshold}
+                            </Text>
+                        </View>
+                    )}
+
+                    {/* Threshold selector */}
+                    <Text style={[styles.settingLabel, { marginTop: 8 }]}>Threshold (min approvals)</Text>
+                    <View style={styles.dmsIntervalRow}>
+                        {[2, 3, 4, 5].filter(t => t <= Math.max(recoveryGuardians.length, 2)).map(t => (
+                            <Pressable
+                                key={t}
+                                style={[
+                                    styles.dmsIntervalChip,
+                                    recoveryThreshold === t && styles.dmsIntervalChipSelected,
+                                ]}
+                                onPress={() => setRecoveryThreshold(t)}
+                            >
+                                <Text style={[
+                                    styles.dmsIntervalChipText,
+                                    recoveryThreshold === t && styles.dmsIntervalChipTextSelected,
+                                ]}>
+                                    {t} of {recoveryGuardians.length || '?'}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </View>
+
+                    {/* Guardian list */}
+                    <Text style={[styles.settingLabel, { marginTop: 14 }]}>Guardians</Text>
+                    {recoveryGuardians.map(u => (
+                        <View key={u} style={styles.dmsRecipientRow}>
+                            <Text style={styles.dmsRecipientName}>@{u}</Text>
+                            <Pressable onPress={() => removeRecoveryGuardian(u)} hitSlop={8}>
+                                <Ionicons name="close-circle" size={20} color={Colors.error} />
+                            </Pressable>
+                        </View>
+                    ))}
+
+                    {/* Add guardian */}
+                    <View style={styles.dmsAddRow}>
+                        <TextInput
+                            style={[styles.dmsInput, { flex: 1 }]}
+                            placeholder="@guardian_username"
+                            placeholderTextColor={Colors.textMuted}
+                            value={recoveryNewGuardian}
+                            onChangeText={setRecoveryNewGuardian}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                        />
+                        <Pressable style={styles.dmsAddBtn} onPress={addRecoveryGuardian}>
+                            <Ionicons name="add" size={20} color={Colors.primary} />
+                        </Pressable>
+                    </View>
+
+                    {/* Quick-add from contacts */}
+                    {contactUsernames.length > 0 && (
+                        <View style={styles.dmsContactSuggestions}>
+                            <Text style={{ fontSize: 10, color: Colors.textMuted, marginBottom: 4 }}>Contacts:</Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                {contactUsernames
+                                    .filter(u => !recoveryGuardians.includes(u))
+                                    .slice(0, 8)
+                                    .map(u => (
+                                        <Pressable
+                                            key={u}
+                                            style={styles.dmsContactChip}
+                                            onPress={() => setRecoveryNewGuardian(u)}
+                                        >
+                                            <Text style={styles.dmsContactChipText}>@{u}</Text>
+                                        </Pressable>
+                                    ))}
+                            </View>
+                        </View>
+                    )}
+
+                    {/* Action buttons */}
+                    <View style={styles.dmsActions}>
+                        {!recoveryConfigured ? (
+                            <Pressable
+                                style={({ pressed }) => [styles.dmsArmBtn, pressed && { opacity: 0.7 }]}
+                                onPress={handleRecoverySave}
+                                disabled={recoveryLoading}
+                            >
+                                {recoveryLoading ? (
+                                    <ActivityIndicator size="small" color={Colors.background} />
+                                ) : (
+                                    <>
+                                        <Ionicons name="shield-outline" size={16} color={Colors.background} />
+                                        <Text style={styles.dmsArmBtnText}>CONFIGURE RECOVERY</Text>
+                                    </>
+                                )}
+                            </Pressable>
+                        ) : (
+                            <>
+                                <Pressable
+                                    style={({ pressed }) => [styles.dmsUpdateBtn, pressed && { opacity: 0.7 }]}
+                                    onPress={handleRecoverySave}
+                                    disabled={recoveryLoading}
+                                >
+                                    <Ionicons name="refresh" size={14} color={Colors.primary} />
+                                    <Text style={styles.dmsUpdateBtnText}>UPDATE</Text>
+                                </Pressable>
+                                <Pressable
+                                    style={({ pressed }) => [styles.dmsDisableBtn, pressed && { opacity: 0.7 }]}
+                                    onPress={handleRecoveryDisable}
+                                    disabled={recoveryLoading}
+                                >
+                                    <Ionicons name="trash-outline" size={14} color={Colors.error} />
+                                    <Text style={styles.dmsDisableBtnText}>DISABLE</Text>
+                                </Pressable>
+                            </>
+                        )}
+                    </View>
+                </View>
+
+                {/* ── Recovery Requests (Guardian Side) ── */}
+                {pendingRecoveryRequests.length > 0 && (
+                    <View style={styles.card}>
+                        <Text style={styles.sectionTitle}>Recovery Requests</Text>
+                        <Text style={[styles.settingLabel, { marginBottom: 12 }]}>
+                            A contact is trying to recover their identity. Approve to release your shard.
+                        </Text>
+                        {pendingRecoveryRequests.map((req, idx) => (
+                            <View key={req.recoveryId} style={[styles.dmsRecipientRow, { alignItems: 'center' }]}>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.dmsRecipientName}>
+                                        Owner: {req.ownerPubkey.slice(0, 8)}…
+                                    </Text>
+                                    <Text style={styles.dmsRecipientMsg}>
+                                        {req.submittedCount}/{req.threshold} approved
+                                    </Text>
+                                </View>
+                                <Pressable
+                                    style={[styles.dmsArmBtn, { paddingVertical: 8, paddingHorizontal: 16 }]}
+                                    onPress={() => handleApproveRecovery(req)}
+                                >
+                                    <Text style={[styles.dmsArmBtnText, { fontSize: 12 }]}>APPROVE</Text>
+                                </Pressable>
+                            </View>
+                        ))}
+                    </View>
+                )}
+
                 {/* Combined System Sections for compactness */}
                 <View style={styles.compactGrid}>
                     <View style={styles.gridHalf}>
@@ -399,7 +801,7 @@ export default function SettingsScreen() {
                             />
                             <View style={styles.divider} />
                             <Pressable onPress={() => {
-                                const url = appConfig?.githubUrl || 'https://github.com/serpepe/KeyApp';
+                                const url = appConfig?.githubUrl || 'https://github.com/utk2602/B3-Decentapp';
                                 Linking.openURL(url);
                             }}>
                                 <SettingsRow
@@ -410,6 +812,169 @@ export default function SettingsScreen() {
                                 />
                             </Pressable>
                         </View>
+                    </View>
+                </View>
+
+                {/* ── Dead Man's Switch Section ── */}
+                <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>Dead Man's Switch</Text>
+                    <Text style={[styles.settingLabel, { marginBottom: 12 }]}>
+                        Automatically deliver messages to chosen contacts if you stop checking in.
+                    </Text>
+
+                    {/* Status bar when active */}
+                    {dmsStatus?.enabled && (
+                        <View style={[styles.dmsStatusBar, dmsStatus.triggered && styles.dmsStatusTriggered]}>
+                            <Ionicons
+                                name={dmsStatus.triggered ? 'alert-circle' : dmsStatus.lastSeenAlive ? 'pulse' : 'time-outline'}
+                                size={16}
+                                color={dmsStatus.triggered ? Colors.error : Colors.accent}
+                            />
+                            <Text style={[styles.dmsStatusText, dmsStatus.triggered && { color: Colors.error }]}>
+                                {dmsStatus.triggered
+                                    ? 'TRIGGERED – messages delivered'
+                                    : dmsStatus.lastSeenAlive
+                                        ? `Active · ${dmsStatus.recipientCount} recipient${dmsStatus.recipientCount !== 1 ? 's' : ''}`
+                                        : 'Countdown expired – awaiting delivery'
+                                }
+                            </Text>
+                        </View>
+                    )}
+
+                    {/* Interval picker */}
+                    <Text style={[styles.settingLabel, { marginTop: 8 }]}>Check-in interval</Text>
+                    <View style={styles.dmsIntervalRow}>
+                        {DMS_INTERVALS.map(iv => (
+                            <Pressable
+                                key={iv.value}
+                                style={[
+                                    styles.dmsIntervalChip,
+                                    dmsInterval === iv.value && styles.dmsIntervalChipSelected,
+                                ]}
+                                onPress={() => setDmsInterval(iv.value)}
+                            >
+                                <Text style={[
+                                    styles.dmsIntervalChipText,
+                                    dmsInterval === iv.value && styles.dmsIntervalChipTextSelected,
+                                ]}>
+                                    {iv.label}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </View>
+
+                    {/* Recipients */}
+                    <Text style={[styles.settingLabel, { marginTop: 14 }]}>Recipients</Text>
+                    {dmsRecipients.map((r, idx) => (
+                        <View key={r.username} style={styles.dmsRecipientRow}>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.dmsRecipientName}>@{r.username}</Text>
+                                <Text style={styles.dmsRecipientMsg} numberOfLines={1}>{r.message}</Text>
+                            </View>
+                            <Pressable onPress={() => removeDMSRecipient(r.username)} hitSlop={8}>
+                                <Ionicons name="close-circle" size={20} color={Colors.error} />
+                            </Pressable>
+                        </View>
+                    ))}
+
+                    {/* Add recipient form */}
+                    <View style={styles.dmsAddRow}>
+                        <TextInput
+                            style={styles.dmsInput}
+                            placeholder="@username"
+                            placeholderTextColor={Colors.textMuted}
+                            value={dmsNewUsername}
+                            onChangeText={setDmsNewUsername}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                        />
+                    </View>
+                    <View style={styles.dmsAddRow}>
+                        <TextInput
+                            style={[styles.dmsInput, { flex: 1 }]}
+                            placeholder="Message to deliver…"
+                            placeholderTextColor={Colors.textMuted}
+                            value={dmsNewMessage}
+                            onChangeText={setDmsNewMessage}
+                            multiline
+                        />
+                        <Pressable style={styles.dmsAddBtn} onPress={addDMSRecipient}>
+                            <Ionicons name="add" size={20} color={Colors.primary} />
+                        </Pressable>
+                    </View>
+
+                    {/* Quick-add from contacts */}
+                    {contactUsernames.length > 0 && (
+                        <View style={styles.dmsContactSuggestions}>
+                            <Text style={{ fontSize: 10, color: Colors.textMuted, marginBottom: 4 }}>Contacts:</Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                {contactUsernames
+                                    .filter(u => !dmsRecipients.find(r => r.username === u))
+                                    .slice(0, 8)
+                                    .map(u => (
+                                        <Pressable
+                                            key={u}
+                                            style={styles.dmsContactChip}
+                                            onPress={() => setDmsNewUsername(u)}
+                                        >
+                                            <Text style={styles.dmsContactChipText}>@{u}</Text>
+                                        </Pressable>
+                                    ))}
+                            </View>
+                        </View>
+                    )}
+
+                    {/* Action buttons */}
+                    <View style={styles.dmsActions}>
+                        {!dmsEnabled || !dmsStatus?.enabled ? (
+                            <Pressable
+                                style={({ pressed }) => [styles.dmsArmBtn, pressed && { opacity: 0.7 }]}
+                                onPress={handleDMSSave}
+                                disabled={dmsLoading}
+                            >
+                                {dmsLoading ? (
+                                    <ActivityIndicator size="small" color={Colors.background} />
+                                ) : (
+                                    <>
+                                        <Ionicons name="timer-outline" size={16} color={Colors.background} />
+                                        <Text style={styles.dmsArmBtnText}>ARM SWITCH</Text>
+                                    </>
+                                )}
+                            </Pressable>
+                        ) : (
+                            <>
+                                <Pressable
+                                    style={({ pressed }) => [styles.dmsCheckinBtn, pressed && { opacity: 0.7 }]}
+                                    onPress={handleDMSCheckin}
+                                    disabled={dmsLoading}
+                                >
+                                    {dmsLoading ? (
+                                        <ActivityIndicator size="small" color={Colors.primary} />
+                                    ) : (
+                                        <>
+                                            <Ionicons name="pulse" size={16} color={Colors.primary} />
+                                            <Text style={styles.dmsCheckinBtnText}>CHECK IN NOW</Text>
+                                        </>
+                                    )}
+                                </Pressable>
+                                <Pressable
+                                    style={({ pressed }) => [styles.dmsUpdateBtn, pressed && { opacity: 0.7 }]}
+                                    onPress={handleDMSSave}
+                                    disabled={dmsLoading}
+                                >
+                                    <Ionicons name="refresh" size={14} color={Colors.primary} />
+                                    <Text style={styles.dmsUpdateBtnText}>UPDATE</Text>
+                                </Pressable>
+                                <Pressable
+                                    style={({ pressed }) => [styles.dmsDisableBtn, pressed && { opacity: 0.7 }]}
+                                    onPress={handleDMSDisable}
+                                    disabled={dmsLoading}
+                                >
+                                    <Ionicons name="power" size={14} color={Colors.error} />
+                                    <Text style={styles.dmsDisableBtnText}>DISARM</Text>
+                                </Pressable>
+                            </>
+                        )}
                     </View>
                 </View>
 
@@ -795,5 +1360,189 @@ const styles = StyleSheet.create({
         fontSize: 10,
         color: Colors.textMuted,
         marginTop: 2,
+    },
+    // ── Dead Man's Switch styles ──
+    dmsStatusBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        padding: 10,
+        borderRadius: 8,
+        backgroundColor: 'rgba(52, 211, 153, 0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(52, 211, 153, 0.15)',
+        marginBottom: 8,
+    },
+    dmsStatusTriggered: {
+        backgroundColor: 'rgba(255, 107, 107, 0.08)',
+        borderColor: 'rgba(255, 107, 107, 0.15)',
+    },
+    dmsStatusText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: Colors.accent,
+    },
+    dmsIntervalRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 4,
+    },
+    dmsIntervalChip: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 16,
+        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    dmsIntervalChipSelected: {
+        backgroundColor: 'rgba(201, 169, 98, 0.15)',
+        borderColor: Colors.primary,
+    },
+    dmsIntervalChipText: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        fontWeight: '500',
+    },
+    dmsIntervalChipTextSelected: {
+        color: Colors.primary,
+        fontWeight: '700',
+    },
+    dmsRecipientRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderRadius: 8,
+        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+        marginBottom: 6,
+    },
+    dmsRecipientName: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.text,
+        fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    },
+    dmsRecipientMsg: {
+        fontSize: 11,
+        color: Colors.textMuted,
+        marginTop: 1,
+    },
+    dmsAddRow: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 8,
+    },
+    dmsInput: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.25)',
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        color: Colors.text,
+        fontSize: 13,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.06)',
+    },
+    dmsAddBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 8,
+        backgroundColor: 'rgba(201, 169, 98, 0.12)',
+        borderWidth: 1,
+        borderColor: 'rgba(201, 169, 98, 0.25)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    dmsContactSuggestions: {
+        marginTop: 10,
+    },
+    dmsContactChip: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
+        backgroundColor: 'rgba(255, 255, 255, 0.04)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    dmsContactChipText: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+    },
+    dmsActions: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 16,
+    },
+    dmsArmBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 12,
+        borderRadius: 10,
+        backgroundColor: Colors.primary,
+    },
+    dmsArmBtnText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: Colors.background,
+        letterSpacing: 1.2,
+    },
+    dmsCheckinBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: 12,
+        borderRadius: 10,
+        backgroundColor: 'rgba(201, 169, 98, 0.12)',
+        borderWidth: 1,
+        borderColor: 'rgba(201, 169, 98, 0.25)',
+    },
+    dmsCheckinBtnText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: Colors.primary,
+        letterSpacing: 1,
+    },
+    dmsUpdateBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        borderRadius: 10,
+        backgroundColor: 'rgba(255, 255, 255, 0.04)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    dmsUpdateBtnText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: Colors.primary,
+        letterSpacing: 0.5,
+    },
+    dmsDisableBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        borderRadius: 10,
+        backgroundColor: 'rgba(255, 107, 107, 0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 107, 107, 0.15)',
+    },
+    dmsDisableBtnText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: Colors.error,
+        letterSpacing: 0.5,
     },
 });

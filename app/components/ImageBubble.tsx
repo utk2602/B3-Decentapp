@@ -5,7 +5,7 @@ import {
     StyleSheet,
     Pressable,
     Modal,
-    Dimensions,
+    useWindowDimensions,
     ActivityIndicator,
     Text,
 } from 'react-native';
@@ -14,10 +14,6 @@ import { Colors } from '@/constants/Colors';
 import { type Message } from '@/lib/storage';
 import * as Haptics from 'expo-haptics';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.65;
-const MAX_BUBBLE_HEIGHT = 300;
-
 interface ImageBubbleProps {
     message: Message;
     isFirstInGroup: boolean;
@@ -25,8 +21,12 @@ interface ImageBubbleProps {
 }
 
 export function ImageBubble({ message, isFirstInGroup, isLastInGroup }: ImageBubbleProps) {
+    const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
+
+    const maxBubbleWidth = Math.min(screenWidth * 0.65, 300);
+    const maxBubbleHeight = 300;
 
     const isMine = message.isMine;
 
@@ -36,11 +36,11 @@ export function ImageBubble({ message, isFirstInGroup, isLastInGroup }: ImageBub
         : 1;
 
     // Calculate display dimensions
-    let displayWidth = MAX_BUBBLE_WIDTH;
+    let displayWidth = maxBubbleWidth;
     let displayHeight = displayWidth / aspectRatio;
 
-    if (displayHeight > MAX_BUBBLE_HEIGHT) {
-        displayHeight = MAX_BUBBLE_HEIGHT;
+    if (displayHeight > maxBubbleHeight) {
+        displayHeight = maxBubbleHeight;
         displayWidth = displayHeight * aspectRatio;
     }
 
@@ -141,7 +141,7 @@ export function ImageBubble({ message, isFirstInGroup, isLastInGroup }: ImageBub
 
                     <Image
                         source={{ uri: imageUri }}
-                        style={styles.fullscreenImage}
+                        style={{ width: screenWidth, height: screenHeight * 0.8 }}
                         resizeMode="contain"
                     />
                 </View>
@@ -152,8 +152,8 @@ export function ImageBubble({ message, isFirstInGroup, isLastInGroup }: ImageBub
 
 const styles = StyleSheet.create({
     container: {
-        marginVertical: 1,
-        paddingHorizontal: 8,
+        marginVertical: 2,
+        marginHorizontal: 16,
     },
     containerMine: {
         alignItems: 'flex-end',
@@ -223,9 +223,5 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255, 255, 255, 0.2)',
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    fullscreenImage: {
-        width: SCREEN_WIDTH,
-        height: SCREEN_HEIGHT * 0.8,
     },
 });

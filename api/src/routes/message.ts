@@ -11,7 +11,7 @@ import {
     getFeePayerBalance,
 } from '../services/solana.js';
 import { rateLimitMiddleware } from '../middleware/rateLimit.js';
-import { isBlocked } from '../services/redis.js';
+import { isBlocked, redis as redisClient } from '../services/redis.js';
 import { uploadToArweave } from '../services/arweaveService.js';
 import { spendingLimitMiddleware } from '../middleware/spendingLimits.js';
 
@@ -87,6 +87,19 @@ router.post('/send', rateLimitMiddleware, spendingLimitMiddleware, async (req: R
                 error: 'Invalid public key',
                 message: 'One or more public keys are invalid',
             });
+        }
+
+        // Check if sender is banned (content moderation)
+        try {
+            const bannedStr = await redisClient.get(`banned:${senderPubkey}`);
+            if (bannedStr) {
+                return res.status(403).json({
+                    error: 'Account suspended',
+                    message: 'Your account has been suspended due to content policy violations.',
+                });
+            }
+        } catch (err) {
+            console.warn('Ban check failed:', err);
         }
 
         // Check if recipient has blocked the sender
@@ -332,6 +345,19 @@ router.post('/group/:groupId/send', rateLimitMiddleware, async (req: Request, re
         // Verify sender is a member
         if (!members.includes(senderPubkey)) {
             return res.status(403).json({ error: 'Not a group member' });
+        }
+
+        // Check if sender is banned (content moderation)
+        try {
+            const bannedStr = await redisClient.get(`banned:${senderPubkey}`);
+            if (bannedStr) {
+                return res.status(403).json({
+                    error: 'Account suspended',
+                    message: 'Your account has been suspended due to content policy violations.',
+                });
+            }
+        } catch (err) {
+            console.warn('Ban check failed:', err);
         }
 
         // Store message on Arweave
